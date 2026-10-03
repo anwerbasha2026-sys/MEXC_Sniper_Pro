@@ -1,0 +1,4 @@
+MEXC Sniper Stage 26 Final Release
+Build: 2026-10-03
+Base: Stage 26 final entry diagnostics
+Release: cleaned packaging + protobuf compatibility pin
