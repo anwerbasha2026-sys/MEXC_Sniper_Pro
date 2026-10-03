@@ -12,8 +12,6 @@ from kivy.app import App
 from kivy.clock import Clock
 from kivy.graphics import Color, RoundedRectangle, Rectangle
 from kivy.metrics import dp
-from kivy.properties import ColorProperty
-from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
@@ -23,17 +21,11 @@ from kivy.uix.button import Button
 from kivy.uix.switch import Switch
 from kivy.uix.popup import Popup
 from kivy.uix.widget import Widget
+import importlib
 
 
 def is_android_platform() -> bool:
     return sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
-
-from app.config import TradingMode, settings
-from app.exchange.spot_client import SpotClient
-from app.exchange.symbol_discovery import SymbolDiscovery
-from app.exchange.websocket_manager import MEXCSpotWebSocketManager
-from app.scanner.live_signal_scanner import LiveSignalScanner
-from app.trading.live_engine import LiveSpotEngine
 
 MOBILE_CONFIG = Path(
     os.environ.get(
@@ -42,6 +34,8 @@ MOBILE_CONFIG = Path(
     )
 )
 SERVICE_STATE = MOBILE_CONFIG.with_name(".mexc_sniper_mobile_service_state.json")
+LIVE_CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
+
 
 DEFAULTS = {
     "trading_mode": "LIVE",
@@ -188,6 +182,17 @@ class IconNavButton(Button):
         self.background_color = (0.08, 0.20, 0.29, 1) if active else (0, 0, 0, 0)
 
 
+def _load_runtime_modules():
+    """Import trading/network modules only after the Kivy UI is visible."""
+    config_mod = importlib.import_module("app.config")
+    spot_client_mod = importlib.import_module("app.exchange.spot_client")
+    symbol_discovery_mod = importlib.import_module("app.exchange.symbol_discovery")
+    ws_mod = importlib.import_module("app.exchange.websocket_manager")
+    scanner_mod = importlib.import_module("app.scanner.live_signal_scanner")
+    engine_mod = importlib.import_module("app.trading.live_engine")
+    return config_mod, spot_client_mod, symbol_discovery_mod, ws_mod, scanner_mod, engine_mod
+
+
 class MobileController:
     """Runs the scanner/network work away from the Kivy UI thread."""
 
@@ -230,6 +235,15 @@ class MobileController:
 
     async def _run(self, c):
         self.loop = asyncio.get_running_loop()
+        (config_mod, spot_client_mod, symbol_discovery_mod,
+         ws_mod, scanner_mod, engine_mod) = _load_runtime_modules()
+        TradingMode = config_mod.TradingMode
+        settings = config_mod.settings
+        SpotClient = spot_client_mod.SpotClient
+        SymbolDiscovery = symbol_discovery_mod.SymbolDiscovery
+        MEXCSpotWebSocketManager = ws_mod.MEXCSpotWebSocketManager
+        LiveSignalScanner = scanner_mod.LiveSignalScanner
+        LiveSpotEngine = engine_mod.LiveSpotEngine
         settings.trading_mode = TradingMode(str(c.get("trading_mode", "LIVE")).upper())
         settings.trading_env = str(c.get("trading_env", "live"))
         settings.live_runtime_armed = bool(c.get("live_runtime_armed", False))
@@ -374,6 +388,9 @@ class MobileController:
             await asyncio.gather(account_task, return_exceptions=True)
 
     def refresh_account(self, sync_positions=True):
+        config_mod, _, _, _, _, engine_mod = _load_runtime_modules()
+        settings = config_mod.settings
+        LiveSpotEngine = engine_mod.LiveSpotEngine
         if not settings.mexc_api_key or not settings.mexc_api_secret:
             raise RuntimeError("Enter MEXC API key and secret first")
         with self.exchange_lock:
@@ -726,7 +743,7 @@ class MobileUI(BoxLayout):
     def _toggle_arm(self, *_):
         armed = not bool(self.cfg.get("live_runtime_armed", False))
         if armed:
-            if str(self.cfg.get("live_trading_confirm", "")) != LiveSpotEngine.CONFIRMATION:
+            if str(self.cfg.get("live_trading_confirm", "")) != LIVE_CONFIRMATION:
                 self._popup_message("LIVE ARM", "Enter the exact confirmation phrase in Settings first.")
                 return
             self.cfg["live_trading_enabled"] = True
@@ -748,7 +765,7 @@ class MobileUI(BoxLayout):
             self.cfg = self.collect()
             save_config(self.cfg)
             if self.cfg["live_runtime_armed"] and self.cfg["live_trading_enabled"]:
-                if self.cfg["live_trading_confirm"] != LiveSpotEngine.CONFIRMATION:
+                if self.cfg["live_trading_confirm"] != LIVE_CONFIRMATION:
                     raise RuntimeError("LIVE confirmation is incorrect")
             if is_android_platform():
                 self._start_background_service()
