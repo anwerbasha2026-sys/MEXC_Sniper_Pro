@@ -17,15 +17,61 @@ class Database:
     def __init__(self, path: str | Path = "data/mexc_sniper.db"):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(
-            self.path,
-            timeout=10.0,
-            check_same_thread=False,
-        )
-        self.conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self.conn = self._open_connection_with_recovery()
+        self.conn.row_factory = sqlite3.Row
         self._configure()
         self._schema()
+
+    def _open_connection_with_recovery(self):
+        """Open the SQLite journal and recover automatically if it is corrupt.
+
+        A damaged journal must never prevent the trading UI from starting.
+        The original database is preserved as a timestamped .corrupt backup,
+        then a fresh schema is created by _schema().
+        """
+        try:
+            conn = sqlite3.connect(
+                self.path,
+                timeout=10.0,
+                check_same_thread=False,
+            )
+            # Opening can succeed even when the file is malformed; verify it.
+            conn.execute("PRAGMA quick_check").fetchone()
+            return conn
+        except sqlite3.DatabaseError:
+            try:
+                if 'conn' in locals():
+                    conn.close()
+            except Exception:
+                pass
+
+            if self.path.exists():
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                backup = self.path.with_name(
+                    f"{self.path.stem}.corrupt_{stamp}{self.path.suffix}"
+                )
+                try:
+                    self.path.replace(backup)
+                except OSError:
+                    # If replacement is unavailable, keep the original and
+                    # let SQLite create a fresh file only when possible.
+                    pass
+
+            # Stale WAL/SHM files can keep a damaged journal alive.
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(self.path) + suffix)
+                try:
+                    if sidecar.exists():
+                        sidecar.unlink()
+                except OSError:
+                    pass
+
+            return sqlite3.connect(
+                self.path,
+                timeout=10.0,
+                check_same_thread=False,
+            )
 
     def _configure(self) -> None:
         with self._lock:

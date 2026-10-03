@@ -124,6 +124,65 @@ class LiveSpotEngine:
                 return float(item.get("total") or item.get("balance") or item.get("free") or 0)
         return 0.0
 
+
+    def sync_account_positions(self, min_notional_usdt: float = 1.0, account: dict | None = None) -> list[LivePosition]:
+        """Import non-zero USDT-quoted Spot holdings already present on MEXC.
+
+        These positions may have been bought outside this process. They are marked
+        ACCOUNT_SYNC so the LIVE Trades screen can display and manually close them.
+        The app does not invent an entry price: current market price is used as the
+        reference until trade history is available.
+        """
+        account = account if account is not None else self.api.account()
+        balances = account.get("balances", []) or []
+        imported = []
+
+        for item in balances:
+            asset = str(item.get("asset", "")).upper().strip()
+            if not asset or asset == "USDT":
+                continue
+            try:
+                free = float(item.get("free") or item.get("available") or item.get("availableAmount") or 0)
+                locked = float(item.get("locked") or item.get("frozen") or item.get("freeze") or 0)
+                total_field = item.get("balance") or item.get("total")
+                qty = float(total_field) if total_field is not None else (free + locked)
+            except (TypeError, ValueError):
+                continue
+            if qty <= 0:
+                continue
+
+            symbol = f"{asset}USDT"
+            try:
+                ticker = self.api.book_ticker(symbol)
+                bid = float(ticker.get("bidPrice") or 0)
+                ask = float(ticker.get("askPrice") or 0)
+                current = bid if bid > 0 else ask
+            except Exception:
+                continue
+            if current <= 0 or qty * current < float(min_notional_usdt):
+                continue
+
+            existing = self.positions.get(symbol)
+            if existing is not None:
+                # Keep the real engine's internally tracked entry/SL/TP unchanged.
+                imported.append(existing)
+                continue
+
+            position = LivePosition(
+                symbol=symbol,
+                quantity=qty,
+                entry_price=current,
+                stop_loss=0.0,
+                take_profit=0.0,
+                entry_order_id="ACCOUNT_SYNC",
+                entry_score=0.0,
+                opened_at=time.time(),
+            )
+            self.positions[symbol] = position
+            imported.append(position)
+
+        return imported
+
     def account_snapshot(self) -> dict:
         account = self.api.account()
         return {
@@ -133,6 +192,7 @@ class LiveSpotEngine:
             "usdt_free": self._free_balance(account, "USDT"),
             "usdt_total": self._total_balance(account, "USDT"),
             "balances": account.get("balances", []),
+            "_raw_account": account,
         }
 
     @staticmethod
@@ -305,9 +365,9 @@ class LiveSpotEngine:
         if position is None or price <= 0:
             return None
 
-        if price <= position.stop_loss:
+        if position.stop_loss > 0 and price <= position.stop_loss:
             return self.close(symbol, "STOP_LOSS")
-        if price >= position.take_profit:
+        if position.take_profit > 0 and price >= position.take_profit:
             return self.close(symbol, "TAKE_PROFIT")
         return None
 
