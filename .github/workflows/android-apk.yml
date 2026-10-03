@@ -1,0 +1,93 @@
+name: Build Stage 26 Android - Onn GN3 ARMv7
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'buildozer.spec'
+      - 'main.py'
+      - 'app/**'
+      - 'generated/**'
+      - 'proto/**'
+      - '.github/workflows/android-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Android build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git zip unzip openjdk-17-jdk \
+            autoconf automake autopoint libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            libtinfo6 cmake libffi-dev libssl-dev gettext
+
+      - name: Install Buildozer and pinned Cython
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install 'buildozer==1.6.0' 'cython==0.29.37'
+
+      - name: Validate Android entry point
+        run: |
+          python -m py_compile main.py
+          python -m py_compile app/scanner/live_signal_scanner.py
+          python -m py_compile app/exchange/websocket_manager.py
+          grep -nE '^(requirements|android.archs|android.minapi|android.api|android.ndk|android.ndk_api|p4a.branch|source.dir)' buildozer.spec
+
+      - name: Clean Buildozer state
+        run: |
+          rm -rf .buildozer bin
+          mkdir -p bin
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee buildozer-build.log
+
+      - name: Find APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find . -type f -iname '*.apk' -not -path './.git/*' | head -n 1 || true)"
+          if [ -z "$APK" ]; then
+            echo 'ERROR: no APK produced'
+            tail -n 300 buildozer-build.log || true
+            exit 1
+          fi
+          cp "$APK" bin/mexc-sniper-stage26-onn-gn3-armeabi-v7a-debug.apk
+          test -s bin/mexc-sniper-stage26-onn-gn3-armeabi-v7a-debug.apk
+          ls -lh bin/mexc-sniper-stage26-onn-gn3-armeabi-v7a-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mexc-sniper-stage26-onn-gn3-armeabi-v7a
+          path: bin/mexc-sniper-stage26-onn-gn3-armeabi-v7a-debug.apk
+          if-no-files-found: error
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage26-android-build-diagnostics
+          path: |
+            buildozer-build.log
+            .buildozer/**/*.log
+          if-no-files-found: warn
