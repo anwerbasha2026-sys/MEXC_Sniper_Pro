@@ -1,7 +1,7 @@
 [app]
 # MEXC Sniper Stage 26 - Android ARMv7 / Onn GN3
 # Windows entry point remains app/main.py. Android uses root main.py.
-
+title = MEXC Sniper Pro
 package.name = mexcsniper
 package.domain = org.mexcsniper
 name = MEXC Sniper
