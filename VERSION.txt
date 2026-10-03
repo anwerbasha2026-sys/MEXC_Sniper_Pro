@@ -1,4 +1,3 @@
-MEXC Sniper Stage 26 Final Release
-Build: 2026-10-03
-Base: Stage 26 final entry diagnostics
-Release: cleaned packaging + protobuf compatibility pin
+MEXC Sniper Mobile PRO Full
+Version: 1.0.8
+Account Sync + Manual Close + Configurable Max Order + DB Recovery
