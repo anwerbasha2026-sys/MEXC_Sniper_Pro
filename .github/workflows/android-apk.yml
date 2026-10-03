@@ -1,4 +1,4 @@
-name: Build MEXC Sniper Android APK - Onn GN3 ARMv7
+name: Build MEXC Sniper Android APK
 
 on:
   workflow_dispatch:
@@ -8,16 +8,27 @@ on:
       - 'buildozer.spec'
       - 'requirements.txt'
       - 'main.py'
+      - 'service.py'
       - 'app/**'
       - 'android/**'
+      - 'generated/**'
+      - 'proto/**'
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Verify canonical Android entry point
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f main.py
+          ! grep -q "android\.mobile_main" main.py
+          grep -q "BootstrapApp" main.py
+          test -f service.py
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -30,130 +41,46 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Android build dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y             build-essential git zip unzip openjdk-17-jdk             autoconf automake autopoint libtool pkg-config             zlib1g-dev libncurses5-dev libncursesw5-dev             libtinfo6 cmake libffi-dev libssl-dev gettext
-
-      - name: Install Buildozer
-        run: |
+          sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf automake autopoint libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 cmake libffi-dev libssl-dev gettext
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install "buildozer==1.6.0" "cython==0.29.37"
 
-      - name: Force stable p4a and Python 3.11 recipe
-        shell: bash
+      - name: Clean
         run: |
-          set -euo pipefail
-
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          spec = Path("buildozer.spec")
-          text = spec.read_text(encoding="utf-8")
-
-          def set_option(text, key, value):
-              pattern = rf"(?m)^\s*#?\s*{re.escape(key)}\s*=.*$"
-              replacement = f"{key} = {value}"
-              if re.search(pattern, text):
-                  return re.sub(pattern, replacement, text, count=1)
-              marker = "[app]"
-              pos = text.find(marker)
-              if pos < 0:
-                  raise SystemExit("buildozer.spec has no [app] section")
-              insert = text.find("\n", pos)
-              return text[:insert+1] + replacement + "\n" + text[insert+1:]
-
-          text = set_option(text, "p4a.branch", "v2024.01.21")
-          text = set_option(text, "p4a.commit", "957a3e5f8c270f7aa648ba185e5a68c1077a798d")
-          spec.write_text(text, encoding="utf-8")
-
-          req = Path("requirements.txt")
-          if req.exists():
-              lines = req.read_text(encoding="utf-8").splitlines()
-              out = []
-              replaced = False
-              for line in lines:
-                  if re.match(r"^\s*python3(?:==|[<>=!~])", line):
-                      if not replaced:
-                          out.append("python3==3.11.5")
-                          replaced = True
-                      continue
-                  if line.strip() == "python3":
-                      if not replaced:
-                          out.append("python3==3.11.5")
-                          replaced = True
-                      continue
-                  out.append(line)
-              if not replaced:
-                  out.insert(0, "python3==3.11.5")
-              req.write_text("\n".join(out) + "\n", encoding="utf-8")
-
-          print("=== p4a settings in buildozer.spec ===")
-          for line in spec.read_text(encoding="utf-8").splitlines():
-              if line.strip().startswith(("p4a.branch", "p4a.commit", "p4a.source_dir")):
-                  print(line)
-
-          print("=== requirements.txt ===")
-          print(req.read_text(encoding="utf-8") if req.exists() else "requirements.txt not found")
-          PY
-
-      - name: Clean Buildozer state
-        run: |
-          rm -rf .buildozer
-          rm -rf bin
+          rm -rf .buildozer bin
           mkdir -p bin
 
-      - name: Build debug APK - ARMv7
+      - name: Build debug APK
         shell: bash
         run: |
           set -o pipefail
           buildozer -v android debug 2>&1 | tee buildozer-build.log
 
-      - name: Verify actual p4a/Python version used
-        if: always()
-        run: |
-          echo "--- p4a checkout ---"
-          if [ -d ".buildozer/android/platform/python-for-android/.git" ]; then
-            git -C .buildozer/android/platform/python-for-android describe --tags --always || true
-            git -C .buildozer/android/platform/python-for-android rev-parse HEAD || true
-          fi
-
-          echo "--- Python recipe version ---"
-          grep -nE "^[[:space:]]*version[[:space:]]*="             .buildozer/android/platform/python-for-android/pythonforandroid/recipes/python3/__init__.py             2>/dev/null || true
-
-          echo "--- built Python include directories ---"
-          find .buildozer/android/platform/build-armeabi-v7a             -type d -name 'include' 2>/dev/null | grep 'python3' | head -20 || true
-
-      - name: Locate and verify APK
+      - name: Verify generated application source
         shell: bash
         run: |
           set -euo pipefail
+          test -f .buildozer/android/app/main.py
+          ! grep -q "android\.mobile_main" .buildozer/android/app/main.py
+          grep -q "BootstrapApp" .buildozer/android/app/main.py
 
-          echo "--- bin ---"
-          find bin -maxdepth 5 -type f -print 2>/dev/null || true
-
-          echo "--- APK files ---"
-          find . -type f -iname '*.apk'             -not -path './.git/*'             -print 2>/dev/null || true
-
-          APK="$(find . -type f -iname '*.apk'             -not -path './.git/*'             -not -path './.buildozer/android/platform/python-for-android/*'             | head -n 1 || true)"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: no APK was produced."
-            echo "--- last build log lines ---"
-            tail -n 300 buildozer-build.log || true
-            exit 1
-          fi
-
+      - name: Locate APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find . -type f -iname '*.apk' -not -path './.git/*' -not -path './.buildozer/android/platform/python-for-android/*' | head -n 1 || true)"
+          test -n "$APK"
           cp "$APK" bin/mexc-sniper-onn-gn3-armeabi-v7a-debug.apk
           test -s bin/mexc-sniper-onn-gn3-armeabi-v7a-debug.apk
-          file bin/mexc-sniper-onn-gn3-armeabi-v7a-debug.apk
           ls -lh bin/mexc-sniper-onn-gn3-armeabi-v7a-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: mexc-sniper-onn-gn3-armeabi-v7a
+          name: mexc-sniper-onn-gn3-v3
           path: bin/mexc-sniper-onn-gn3-armeabi-v7a-debug.apk
           if-no-files-found: error
 
@@ -161,7 +88,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: android-build-diagnostics
+          name: android-build-diagnostics-v3
           path: |
             buildozer-build.log
             .buildozer/**/*.log
