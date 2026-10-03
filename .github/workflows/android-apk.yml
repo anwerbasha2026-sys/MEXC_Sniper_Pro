@@ -76,7 +76,10 @@ jobs:
               return text[:insert+1] + replacement + "\n" + text[insert+1:]
 
           text = set_option(text, "p4a.branch", "v2024.01.21")
-          text = set_option(text, "p4a.commit", "957a3e5f8c270f7aa648ba185e5a68c1077a798d")
+          # Do not pin a newer commit here: the selected 2024.01.21 release
+          # is the release whose python3/hostpython3 recipe defaults to 3.11.5.
+          # A newer commit can silently move the recipe to Python 3.14.x and
+          # then reject python3==3.11.5.
           spec.write_text(text, encoding="utf-8")
 
           req = Path("requirements.txt")
@@ -98,6 +101,9 @@ jobs:
                   out.append(line)
               if not replaced:
                   out.insert(0, "python3==3.11.5")
+              # p4a requires target python3 and hostpython3 to match exactly.
+              out = [line for line in out if not re.match(r"^\s*hostpython3(?:==|[<>=!~])", line)]
+              out.append("hostpython3==3.11.5")
               req.write_text("\n".join(out) + "\n", encoding="utf-8")
           PY
 
