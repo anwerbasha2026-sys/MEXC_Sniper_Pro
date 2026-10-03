@@ -14,8 +14,8 @@ from app.scanner.signal_state import SignalStateMachine
 def main():
     machine = SignalStateMachine(
         trigger_threshold=80.0,
-        confirmations_required=1,
-        cooldown_seconds=20
+        confirmations_required=2,
+        cooldown_seconds=60.0,
     )
 
     snapshot = FeatureSnapshot(

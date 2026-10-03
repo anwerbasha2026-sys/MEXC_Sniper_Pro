@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     live_trading_confirm: str = ""
     trading_env: str = "live"
     live_order_usdt: float = 10.0
+    live_hard_max_order_usdt: float = 100.0
     live_max_open_positions: int = 1
     live_stop_loss_pct: float = 1.5
     live_take_profit_pct: float = 3.0

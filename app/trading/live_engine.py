@@ -63,8 +63,7 @@ class LiveSpotEngine:
         self.max_entry_drift_pct = max(0.0, float(settings.live_max_entry_drift_pct))
         self.min_top_ask_coverage_pct = max(0.0, float(settings.live_min_top_ask_coverage_pct))
 
-        # Hard safety ceiling. Increase only by editing code deliberately.
-        self.hard_max_order_usdt = 10.0
+        self.hard_max_order_usdt = max(self.order_usdt, float(getattr(settings, "live_hard_max_order_usdt", 100.0)))
 
     def preflight(self) -> dict:
         if not self.enabled:
@@ -87,6 +86,8 @@ class LiveSpotEngine:
             "live_order_usdt": self.order_usdt,
             "max_open_positions": self.max_open_positions,
             "hard_max_order_usdt": self.hard_max_order_usdt,
+            "usdt_free": self._free_balance(account, "USDT"),
+            "usdt_total": self._total_balance(account, "USDT"),
         }
 
     @staticmethod
@@ -115,6 +116,24 @@ class LiveSpotEngine:
         if item.get("isSpotTradingAllowed") is False:
             raise RuntimeError(f"Spot trading disabled for {symbol}")
         return item
+
+    @staticmethod
+    def _total_balance(account: dict, asset: str) -> float:
+        for item in account.get("balances", []):
+            if str(item.get("asset", "")).upper() == asset.upper():
+                return float(item.get("total") or item.get("balance") or item.get("free") or 0)
+        return 0.0
+
+    def account_snapshot(self) -> dict:
+        account = self.api.account()
+        return {
+            "accountType": account.get("accountType"),
+            "canTrade": account.get("canTrade"),
+            "permissions": account.get("permissions", []),
+            "usdt_free": self._free_balance(account, "USDT"),
+            "usdt_total": self._total_balance(account, "USDT"),
+            "balances": account.get("balances", []),
+        }
 
     @staticmethod
     def _free_balance(account: dict, asset: str) -> float:

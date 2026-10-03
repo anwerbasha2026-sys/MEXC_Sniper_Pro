@@ -142,11 +142,11 @@ class EngineController:
             "liquidity": c.get("strategy_liquidity", True),
         }
         self.scanner = LiveSignalScanner(
-            strong_threshold=65.0,
-            ready_threshold=55.0,
-            reset_threshold=50.0,
-            confirmations_required=1,
-            cooldown_seconds=20,
+            strong_threshold=float(c.get("scanner_score_threshold", 80.0)),
+            ready_threshold=float(c.get("scanner_ready_threshold", 70.0)),
+            reset_threshold=float(c.get("scanner_reset_threshold", 60.0)),
+            confirmations_required=int(c.get("scanner_confirmations", 2)),
+            cooldown_seconds=float(c.get("scanner_cooldown_seconds", 60.0)),
             stale_after_ms=float(c.get("scanner_stale_after_ms", 3000.0)),
             paper_starting_balance=float(c.get("paper_starting_balance", 1000.0)),
             paper_order_usdt=float(c.get("paper_order_usdt", 50.0)),

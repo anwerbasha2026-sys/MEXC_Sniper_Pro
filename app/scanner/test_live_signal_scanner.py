@@ -52,8 +52,8 @@ def book_wrapper(symbol="TESTUSDT"):
 
 def test_oneof_body_is_used_and_deals_create_snapshots():
     scanner = LiveSignalScanner(
-        strong_threshold=65.0,
-        confirmations_required=1
+        strong_threshold=80,
+        confirmations_required=1,
     )
 
     # Book updates must not be mistaken for empty deal messages.
