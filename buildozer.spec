@@ -5,8 +5,8 @@ package.domain = org.mexcsniper
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,json,txt,csv,proto
 source.exclude_dirs = .git,.buildozer,bin,__pycache__
-version = 1.1.0
-requirements = python3,kivy==2.3.1,requests==2.32.5,httpx,websockets,protobuf,python-dotenv,pydantic,pydantic-settings
+version = 1.1.1
+requirements = python3==3.11.5,kivy==2.3.1,requests==2.32.5,httpx,websockets,protobuf==7.36.2,python-dotenv,pydantic,pydantic-settings
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,WAKE_LOCK,FOREGROUND_SERVICE,POST_NOTIFICATIONS
