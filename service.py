@@ -12,7 +12,6 @@ import os
 import time
 from pathlib import Path
 
-from app.mobile_main import MobileController, load_config
 
 CONFIG_PATH = Path(
     os.environ.get(
@@ -76,8 +75,9 @@ class StateWriter:
 def main():
     writer = StateWriter()
     writer.emit("status", "BACKGROUND STARTING")
-    controller = MobileController(writer.emit)
     try:
+        from app.mobile_main import MobileController, load_config
+        controller = MobileController(writer.emit)
         cfg = load_config()
         controller._thread(cfg)
     except Exception as exc:

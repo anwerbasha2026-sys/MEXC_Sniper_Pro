@@ -5,7 +5,7 @@ package.domain = org.mexcsniper
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,json,txt,csv,proto
 source.exclude_dirs = .git,.buildozer,bin,__pycache__
-version = 1.1.1
+version = 1.2.0
 requirements = python3==3.11.5,kivy==2.3.1,requests==2.32.5,httpx,websockets,protobuf==7.36.2,python-dotenv,pydantic,pydantic-settings
 orientation = portrait
 fullscreen = 0
@@ -19,6 +19,7 @@ android.enable_androidx = True
 android.accept_sdk_license = True
 android.private_storage = True
 android.debug_artifact = apk
+android.logcat_filters = *:S python:I AndroidRuntime:E SDLThread:E
 
 [buildozer]
 log_level = 2
