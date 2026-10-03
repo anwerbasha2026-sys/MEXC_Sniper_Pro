@@ -1,13 +1,26 @@
+"""Android-safe entry point for MEXC Sniper Mobile.
+
+The Kivy window is created before importing the full trading UI.  This is
+intentional: any failure in optional trading/network/protobuf modules must be
+shown inside the already-visible bootstrap window instead of terminating the
+process before the first frame.
+"""
+from __future__ import annotations
+
 import os
 import sys
 import traceback
 from pathlib import Path
 
 
-def _write_startup_error(exc: BaseException) -> None:
-    text = "MEXC Sniper Android startup crash\n\n" + traceback.format_exc()
+def is_android() -> bool:
+    return sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
+
+
+def _log_startup_error(exc: BaseException) -> str:
+    text = "MEXC Sniper startup error\n\n" + traceback.format_exc()
     targets = []
-    for base in (Path.home(), Path.cwd()):
+    for base in (Path.home(), Path.cwd(), Path("/sdcard/Download")):
         try:
             targets.append(base / "mexc_startup_crash.log")
         except Exception:
@@ -16,53 +29,89 @@ def _write_startup_error(exc: BaseException) -> None:
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
-            return
+            break
         except Exception:
             continue
+    return text
 
 
-def is_android():
-    return sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
-
-
-# Keep the Android bootstrap tiny. Heavy trading imports are intentionally delayed
-# until after the Kivy window is created.
 if is_android():
-    try:
-        from kivy.app import App
-        from kivy.uix.boxlayout import BoxLayout
-        from kivy.uix.label import Label
-        from kivy.graphics import Color, Rectangle
+    # Only Kivy core imports happen before the first frame.
+    from kivy.app import App
+    from kivy.clock import Clock
+    from kivy.graphics import Color, Rectangle
+    from kivy.uix.boxlayout import BoxLayout
+    from kivy.uix.button import Button
+    from kivy.uix.label import Label
+    from kivy.uix.scrollview import ScrollView
 
-        class BootstrapErrorApp(App):
-            title = "MEXC Sniper Mobile"
-            def __init__(self, error_text=None, **kwargs):
-                super().__init__(**kwargs)
-                self.error_text = error_text or ""
-            def build(self):
-                root = BoxLayout(orientation="vertical", padding=24, spacing=16)
-                with root.canvas.before:
-                    Color(0.025, 0.055, 0.095, 1)
-                    self.bg = Rectangle(pos=root.pos, size=root.size)
-                root.bind(pos=lambda *_: setattr(self.bg, "pos", root.pos),
-                          size=lambda *_: setattr(self.bg, "size", root.size))
-                root.add_widget(Label(text="MEXC SNIPER", font_size="28sp", bold=True))
-                root.add_widget(Label(text=self.error_text or "Starting…\nPlease wait.", halign="center"))
-                return root
+    class BootstrapApp(App):
+        title = "MEXC Sniper Mobile"
 
-        try:
-            from app.mobile_main import MEXCSniperMobileApp
-            MEXCSniperMobileApp().run()
-        except BaseException as exc:
-            _write_startup_error(exc)
-            BootstrapErrorApp(f"STARTUP ERROR\n\n{type(exc).__name__}: {exc}").run()
-    except BaseException as exc:
-        _write_startup_error(exc)
-        raise
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.root_box = None
+            self.message = None
+            self.detail = None
+            self._loaded = False
+
+        def build(self):
+            root = BoxLayout(orientation="vertical", padding=24, spacing=14)
+            with root.canvas.before:
+                Color(0.025, 0.055, 0.095, 1)
+                bg = Rectangle(pos=root.pos, size=root.size)
+            root.bind(pos=lambda *_: setattr(bg, "pos", root.pos),
+                      size=lambda *_: setattr(bg, "size", root.size))
+
+            title = Label(text="MEXC SNIPER", font_size="28sp", bold=True,
+                          color=(0.1, 0.88, 0.98, 1), size_hint_y=None, height=60)
+            root.add_widget(title)
+            self.message = Label(text="Starting secure mobile terminal…",
+                                 font_size="17sp", halign="center", valign="middle")
+            self.message.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+            root.add_widget(self.message)
+            self.detail = Label(text="Initializing UI…", font_size="12sp",
+                                color=(0.65, 0.72, 0.80, 1), halign="center", valign="top")
+            self.detail.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+            root.add_widget(self.detail)
+            self.root_box = root
+            self._show_full_ui = Button(text="RETRY FULL UI", size_hint_y=None, height=52)
+            self._show_full_ui.bind(on_release=lambda *_: self._load_full_ui())
+            self._show_full_ui.opacity = 0
+            self._show_full_ui.disabled = True
+            root.add_widget(self._show_full_ui)
+            Clock.schedule_once(lambda *_: self._load_full_ui(), 0.35)
+            return root
+
+        def _load_full_ui(self):
+            if self._loaded:
+                return
+            try:
+                from app.mobile_main import MEXCSniperMobileApp
+                # Build the full UI without starting a second App event loop.
+                full_app = MEXCSniperMobileApp()
+                full_root = full_app.build()
+                self.root_box.clear_widgets()
+                self.root_box.add_widget(full_root)
+                self._loaded = True
+            except BaseException as exc:
+                text = _log_startup_error(exc)
+                self.message.text = "FULL UI LOAD FAILED — APP KEPT OPEN"
+                self.message.color = (1.0, 0.35, 0.45, 1)
+                self.detail.text = f"{type(exc).__name__}: {exc}\n\nA log was saved as mexc_startup_crash.log"
+                self._show_full_ui.opacity = 1
+                self._show_full_ui.disabled = False
+                # Keep only a compact detail in the visible screen; full traceback
+                # is written to the file for diagnosis.
+
 else:
     try:
         from app.dashboard.dashboard import Dashboard
         Dashboard().mainloop()
     except BaseException as exc:
-        _write_startup_error(exc)
+        _log_startup_error(exc)
         raise
+
+
+if is_android():
+    BootstrapApp().run()

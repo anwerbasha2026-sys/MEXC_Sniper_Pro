@@ -1,9 +1,7 @@
 """Android foreground service entry point for MEXC Sniper.
 
-The service runs the same MobileController used by the UI, so scanner,
-WebSocket, LIVE execution, SL/TP checks, account synchronization and reconnect
-logic remain in one code path. It is packaged as a foreground+sticky service
-and is started explicitly by the visible Android activity.
+The service intentionally does not import Kivy.  It runs the trading/network
+controller headlessly so the UI process and service process remain isolated.
 """
 from __future__ import annotations
 
@@ -12,25 +10,13 @@ import os
 import time
 from pathlib import Path
 
-
-CONFIG_PATH = Path(
-    os.environ.get(
-        "MEXC_MOBILE_CONFIG",
-        str(Path.home() / ".mexc_sniper_mobile.json"),
-    )
-)
+CONFIG_PATH = Path(os.environ.get("MEXC_MOBILE_CONFIG", str(Path.home() / ".mexc_sniper_mobile.json")))
 STATE_PATH = CONFIG_PATH.with_name(".mexc_sniper_mobile_service_state.json")
 
 
 class StateWriter:
     def __init__(self):
-        self.state = {
-            "status": "STARTING",
-            "account": {},
-            "events": [],
-            "rows": [],
-            "updated_at": time.time(),
-        }
+        self.state = {"status": "STARTING", "account": {}, "events": [], "rows": [], "updated_at": time.time()}
 
     def _write(self):
         try:
@@ -51,21 +37,17 @@ class StateWriter:
         elif kind == "row" and isinstance(value, dict):
             rows = self.state.setdefault("rows", [])
             rows.append(value)
-            # Keep a compact recent snapshot per symbol.
             latest = {}
-            for row in rows[-300:]:
+            for row in rows[-400:]:
                 sym = str(row.get("symbol", ""))
                 if sym:
                     latest[sym] = row
             self.state["rows"] = list(latest.values())[-120:]
-        elif kind == "event":
+        elif kind in {"event", "error"}:
             events = self.state.setdefault("events", [])
-            events.append(str(value))
-            self.state["events"] = events[-80:]
-        elif kind == "error":
-            events = self.state.setdefault("events", [])
-            events.append(f"ERROR • {value}")
-            self.state["events"] = events[-80:]
+            prefix = "ERROR • " if kind == "error" else ""
+            events.append(prefix + str(value))
+            self.state["events"] = events[-100:]
         elif kind == "preflight" and isinstance(value, dict):
             self.state["preflight"] = value
         self.state["updated_at"] = time.time()
@@ -76,10 +58,11 @@ def main():
     writer = StateWriter()
     writer.emit("status", "BACKGROUND STARTING")
     try:
+        # Imported only inside the service process, and without Kivy UI imports
+        # being required by this service entry point.
         from app.mobile_main import MobileController, load_config
         controller = MobileController(writer.emit)
-        cfg = load_config()
-        controller._thread(cfg)
+        controller._thread(load_config())
     except Exception as exc:
         writer.emit("error", repr(exc))
         writer.emit("status", "BACKGROUND ERROR")
