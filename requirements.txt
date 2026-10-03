@@ -1,3 +1,5 @@
+python3==3.11.5
+hostpython3==3.11.5
 websockets>=15.0
 protobuf>=7.36.2,<8
 pydantic>=2.0

@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,json,txt,csv,proto
 source.exclude_dirs = .git,.buildozer,bin,__pycache__
 version = 1.3.0
-requirements = python3==3.11.5,kivy==2.3.1,requests==2.32.5,httpx,websockets,protobuf==7.36.2,python-dotenv,pydantic,pydantic-settings
+requirements = python3==3.11.5,hostpython3==3.11.5,kivy==2.3.1,requests==2.32.5,httpx,websockets,protobuf==7.36.2,python-dotenv,pydantic,pydantic-settings
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,WAKE_LOCK,FOREGROUND_SERVICE,POST_NOTIFICATIONS
@@ -27,5 +27,4 @@ warn_on_root = 1
 
 p4a.bootstrap = sdl2
 p4a.branch = v2024.01.21
-p4a.commit = 957a3e5f8c270f7aa648ba185e5a68c1077a798d
 services = sniperd:service.py:foreground:sticky
