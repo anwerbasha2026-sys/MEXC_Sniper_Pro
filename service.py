@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import sys
 from pathlib import Path
 
 CONFIG_PATH = Path(os.environ.get("MEXC_MOBILE_CONFIG", str(Path.home() / ".mexc_sniper_mobile.json")))
