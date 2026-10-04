@@ -27,31 +27,13 @@ import importlib
 def is_android_platform() -> bool:
     return sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
 
-def _mobile_data_dir() -> Path:
-    """Return an Android-private writable directory (never /data)."""
-    override = os.environ.get("MEXC_MOBILE_DATA_DIR")
-    if override:
-        return Path(override)
-    if is_android_platform():
-        try:
-            from android.storage import app_storage_path
-            return Path(app_storage_path())
-        except Exception:
-            try:
-                app = App.get_running_app()
-                if app is not None:
-                    return Path(app.user_data_dir)
-            except Exception:
-                pass
-        # Last-resort writable path under the packaged app directory.
-        return Path(__file__).resolve().parent / "userdata"
-    return Path.home() / ".mexc_sniper_mobile"
-
-MOBILE_DATA_DIR = _mobile_data_dir()
 MOBILE_CONFIG = Path(
-    os.environ.get("MEXC_MOBILE_CONFIG", str(MOBILE_DATA_DIR / "mexc_sniper_mobile.json"))
+    os.environ.get(
+        "MEXC_MOBILE_CONFIG",
+        str(Path.home() / ".mexc_sniper_mobile.json"),
+    )
 )
-SERVICE_STATE = MOBILE_CONFIG.with_name("mexc_sniper_mobile_service_state.json")
+SERVICE_STATE = MOBILE_CONFIG.with_name(".mexc_sniper_mobile_service_state.json")
 LIVE_CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
 
 
@@ -101,19 +83,9 @@ def load_config() -> dict:
 
 def save_config(data: dict) -> None:
     MOBILE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, indent=2, ensure_ascii=False)
-    tmp = MOBILE_CONFIG.with_name(MOBILE_CONFIG.name + ".tmp")
-    try:
-        tmp.write_text(payload, encoding="utf-8")
-        tmp.replace(MOBILE_CONFIG)
-    except OSError:
-        # Some Android filesystems are stricter about atomic replace; keep the
-        # app usable and write directly inside the private app directory.
-        MOBILE_CONFIG.write_text(payload, encoding="utf-8")
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
+    tmp = MOBILE_CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(MOBILE_CONFIG)
 
 
 # ---- Visual system -------------------------------------------------------
@@ -454,6 +426,8 @@ class MobileUI(BoxLayout):
         self.signal_data = []
         self.event_lines: list[str] = []
         self.last_account_refresh = 0.0
+        self._account_sync_inflight = False
+        self._live_view_refresh_scheduled = False
 
         with self.canvas.before:
             Color(*NAVY)
@@ -525,13 +499,18 @@ class MobileUI(BoxLayout):
         self.pages["Activity"] = self._page_activity()
 
     def _show_page(self, page):
+        # Keep navigation itself lightweight. In particular, do not perform
+        # account/network work synchronously from the tab click handler.
         self.current_page = page
         self.content_host.clear_widgets()
         self.content_host.add_widget(self.pages[page])
         for name, btn in self.nav_buttons.items():
             btn.set_active(name == page)
         if page == "LIVE Trades":
-            self._request_account_refresh(sync=True)
+            # Give Kivy one frame to finish the page transition before starting
+            # the account sync worker. This prevents a large account sync/render
+            # from starving the Android main/UI thread.
+            Clock.schedule_once(lambda *_: self._request_account_refresh(sync=True), 0.05)
 
     def _scroll_page(self, inner):
         scroll = ScrollView(do_scroll_x=False, bar_width=dp(4))
@@ -860,7 +839,8 @@ class MobileUI(BoxLayout):
         rows = state.get("rows")
         if isinstance(rows, list):
             self.signal_data = rows[-100:]
-        self._refresh_live_positions_view()
+        if self.current_page == "LIVE Trades":
+            self._refresh_live_positions_view()
         if self.cfg.get("live_runtime_armed") and status and "ONLINE" in str(status):
             self.start_button.text = "RUNNING BG" if is_android_platform() else "RUNNING"
             self.start_button.background_color = TEAL
@@ -870,19 +850,36 @@ class MobileUI(BoxLayout):
             self._apply_service_state(self._load_service_state())
 
     def _request_account_refresh(self, sync=True):
+        # Coalesce repeated refresh requests. A tab tap, background poll, and
+        # service-state update can otherwise start several API/position syncs at
+        # once, which is especially expensive on Android.
+        if self._account_sync_inflight:
+            return
+        self._account_sync_inflight = True
         self.status_chip.text = "SYNCING"
         self._log("ACCOUNT REFRESH REQUESTED")
+
         def worker():
             try:
                 self.controller.refresh_account(sync_positions=sync)
-                Clock.schedule_once(lambda *_: self._refresh_live_positions_view(), 0)
             except Exception as exc:
-                Clock.schedule_once(lambda *_: self.emit("error", f"ACCOUNT SYNC FAILED • {exc}"), 0)
-        threading.Thread(target=worker, daemon=True).start()
+                Clock.schedule_once(
+                    lambda *_: self.emit("error", f"ACCOUNT SYNC FAILED • {exc}"), 0
+                )
+            finally:
+                Clock.schedule_once(self._account_sync_finished, 0)
+
+        threading.Thread(target=worker, daemon=True, name="mexc-account-sync").start()
+
+    def _account_sync_finished(self, *_):
+        self._account_sync_inflight = False
+        if self.current_page == "LIVE Trades":
+            self._refresh_live_positions_view()
 
     def _refresh_live_positions_view(self):
         self._render_account_cards()
-        self._render_live_positions()
+        if self.current_page == "LIVE Trades":
+            self._render_live_positions()
 
     # Account / trades ----------------------------------------------------
     def _render_account_cards(self):
@@ -1012,7 +1009,8 @@ class MobileUI(BoxLayout):
             self.account_data = dict(data)
             self.last_account_refresh = time.time()
             self._render_account_cards()
-            self._render_live_positions()
+            if self.current_page == "LIVE Trades":
+                self._render_live_positions()
             perms = ", ".join(map(str, data.get("permissions", []))) or "none"
             self._log(f"ACCOUNT • canTrade={data.get('canTrade')} • permissions={perms}")
         elif kind == "preflight":
