@@ -27,13 +27,31 @@ import importlib
 def is_android_platform() -> bool:
     return sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
 
+def _mobile_data_dir() -> Path:
+    """Return an Android-private writable directory (never /data)."""
+    override = os.environ.get("MEXC_MOBILE_DATA_DIR")
+    if override:
+        return Path(override)
+    if is_android_platform():
+        try:
+            from android.storage import app_storage_path
+            return Path(app_storage_path())
+        except Exception:
+            try:
+                app = App.get_running_app()
+                if app is not None:
+                    return Path(app.user_data_dir)
+            except Exception:
+                pass
+        # Last-resort writable path under the packaged app directory.
+        return Path(__file__).resolve().parent / "userdata"
+    return Path.home() / ".mexc_sniper_mobile"
+
+MOBILE_DATA_DIR = _mobile_data_dir()
 MOBILE_CONFIG = Path(
-    os.environ.get(
-        "MEXC_MOBILE_CONFIG",
-        str(Path.home() / ".mexc_sniper_mobile.json"),
-    )
+    os.environ.get("MEXC_MOBILE_CONFIG", str(MOBILE_DATA_DIR / "mexc_sniper_mobile.json"))
 )
-SERVICE_STATE = MOBILE_CONFIG.with_name(".mexc_sniper_mobile_service_state.json")
+SERVICE_STATE = MOBILE_CONFIG.with_name("mexc_sniper_mobile_service_state.json")
 LIVE_CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
 
 
@@ -83,9 +101,19 @@ def load_config() -> dict:
 
 def save_config(data: dict) -> None:
     MOBILE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    tmp = MOBILE_CONFIG.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(MOBILE_CONFIG)
+    payload = json.dumps(data, indent=2, ensure_ascii=False)
+    tmp = MOBILE_CONFIG.with_name(MOBILE_CONFIG.name + ".tmp")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(MOBILE_CONFIG)
+    except OSError:
+        # Some Android filesystems are stricter about atomic replace; keep the
+        # app usable and write directly inside the private app directory.
+        MOBILE_CONFIG.write_text(payload, encoding="utf-8")
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 # ---- Visual system -------------------------------------------------------
