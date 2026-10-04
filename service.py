@@ -10,8 +10,18 @@ import os
 import time
 from pathlib import Path
 
-CONFIG_PATH = Path(os.environ.get("MEXC_MOBILE_CONFIG", str(Path.home() / ".mexc_sniper_mobile.json")))
-STATE_PATH = CONFIG_PATH.with_name(".mexc_sniper_mobile_service_state.json")
+def _mobile_data_dir() -> Path:
+    override = os.environ.get("MEXC_MOBILE_DATA_DIR")
+    if override:
+        return Path(override)
+    try:
+        from android.storage import app_storage_path
+        return Path(app_storage_path())
+    except Exception:
+        return Path(__file__).resolve().parent / "userdata"
+
+CONFIG_PATH = Path(os.environ.get("MEXC_MOBILE_CONFIG", str(_mobile_data_dir() / "mexc_sniper_mobile.json")))
+STATE_PATH = CONFIG_PATH.with_name("mexc_sniper_mobile_service_state.json")
 
 
 class StateWriter:
@@ -21,9 +31,17 @@ class StateWriter:
     def _write(self):
         try:
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp = STATE_PATH.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(STATE_PATH)
+            payload = json.dumps(self.state, ensure_ascii=False)
+            tmp = STATE_PATH.with_name(STATE_PATH.name + ".tmp")
+            try:
+                tmp.write_text(payload, encoding="utf-8")
+                tmp.replace(STATE_PATH)
+            except OSError:
+                STATE_PATH.write_text(payload, encoding="utf-8")
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
         except Exception:
             pass
 
