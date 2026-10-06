@@ -1,6 +1,6 @@
 """Android foreground service entry point for MEXC Sniper.
 
-The service intentionally does not import Kivy.  It runs the trading/network
+The service intentionally does not import Kivy. It runs the trading/network
 controller headlessly so the UI process and service process remain isolated.
 """
 from __future__ import annotations
@@ -8,10 +8,27 @@ from __future__ import annotations
 import json
 import os
 import time
-import sys
 from pathlib import Path
 
-CONFIG_PATH = Path(os.environ.get("MEXC_MOBILE_CONFIG", str(Path.home() / ".mexc_sniper_mobile.json")))
+
+def _default_config_path() -> Path:
+    configured = os.environ.get("MEXC_MOBILE_CONFIG")
+    if configured:
+        return Path(configured)
+
+    # python-for-android normally exposes the app-private directory through
+    # ANDROID_PRIVATE. Fall back to the package-private files directory for
+    # this app. Never use Path.home() on Android: on affected builds it can be
+    # /data, which is not writable by the application.
+    private = os.environ.get("ANDROID_PRIVATE")
+    if private:
+        return Path(private) / "mexc_sniper_mobile.json"
+    if sys.platform == "android" or os.environ.get("ANDROID_ARGUMENT"):
+        return Path("/data/data/org.mexcsniper/files/mexc_sniper_mobile.json")
+    return Path.home() / ".mexc_sniper_mobile.json"
+
+
+CONFIG_PATH = _default_config_path()
 STATE_PATH = CONFIG_PATH.with_name(".mexc_sniper_mobile_service_state.json")
 
 
@@ -59,8 +76,6 @@ def main():
     writer = StateWriter()
     writer.emit("status", "BACKGROUND STARTING")
     try:
-        # Imported only inside the service process, and without Kivy UI imports
-        # being required by this service entry point.
         from app.mobile_main import MobileController, load_config
         controller = MobileController(writer.emit)
         controller._thread(load_config())
