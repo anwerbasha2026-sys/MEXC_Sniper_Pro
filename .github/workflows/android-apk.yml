@@ -28,11 +28,14 @@ jobs:
           set -euo pipefail
           test -f main.py
           test -f app/mobile_main.py
+          test -f app/mobile_safety_patch.py
+          test -f app/trading/live_engine.py
           test -f service.py
           test -f buildozer.spec
           ! grep -q "android\.mobile_main" main.py
           grep -q "app\.mobile_main" main.py
-          python -m py_compile main.py app/mobile_main.py service.py
+          grep -q "mobile_safety_patch" main.py
+          python -m py_compile main.py app/mobile_main.py app/mobile_safety_patch.py service.py app/trading/live_engine.py
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -50,7 +53,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf automake autopoint libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 cmake libffi-dev libssl-dev gettext
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "buildozer==1.6.0" "cython==0.29.37"
+          python -m pip install "buildozer==1.6.0" "cython==0.29.37" pytest
 
       - name: Pin stable python-for-android and Python recipe
         shell: bash
@@ -76,10 +79,6 @@ jobs:
               return text[:insert+1] + replacement + "\n" + text[insert+1:]
 
           text = set_option(text, "p4a.branch", "v2024.01.21")
-          # Do not pin a newer commit here: the selected 2024.01.21 release
-          # is the release whose python3/hostpython3 recipe defaults to 3.11.5.
-          # A newer commit can silently move the recipe to Python 3.14.x and
-          # then reject python3==3.11.5.
           spec.write_text(text, encoding="utf-8")
 
           req = Path("requirements.txt")
@@ -101,11 +100,16 @@ jobs:
                   out.append(line)
               if not replaced:
                   out.insert(0, "python3==3.11.5")
-              # p4a requires target python3 and hostpython3 to match exactly.
               out = [line for line in out if not re.match(r"^\s*hostpython3(?:==|[<>=!~])", line)]
               out.append("hostpython3==3.11.5")
               req.write_text("\n".join(out) + "\n", encoding="utf-8")
           PY
+
+      - name: Run Python regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q app/trading/test_live_position_reconciliation.py app/trading/test_live_gate.py app/trading/test_live_safety.py app/trading/test_live_default_lock.py app/market/test_feature_engine_zero_division.py app/market/test_scoring.py
 
       - name: Clean Buildozer state
         run: |
@@ -125,6 +129,7 @@ jobs:
           test -f .buildozer/android/app/main.py
           ! grep -q "android\.mobile_main" .buildozer/android/app/main.py
           grep -q "app\.mobile_main" .buildozer/android/app/main.py
+          grep -q "mobile_safety_patch" .buildozer/android/app/main.py
           python -m py_compile .buildozer/android/app/main.py
 
       - name: Locate and verify APK
