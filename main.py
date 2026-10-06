@@ -84,6 +84,12 @@ if is_android():
             if self._loaded:
                 return
             try:
+                # Android private storage is writable; Path.home() can resolve
+                # to /data on some python-for-android builds and is not writable.
+                data_dir = Path(self.user_data_dir)
+                data_dir.mkdir(parents=True, exist_ok=True)
+                os.environ["MEXC_MOBILE_CONFIG"] = str(data_dir / "mexc_sniper_mobile.json")
+
                 from app import mobile_main as mobile_module
                 from app.mobile_main import MEXCSniperMobileApp
                 from app.mobile_safety_patch import apply
