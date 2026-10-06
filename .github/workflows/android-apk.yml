@@ -35,7 +35,10 @@ jobs:
           ! grep -q "android\.mobile_main" main.py
           grep -q "app\.mobile_main" main.py
           grep -q "mobile_safety_patch" main.py
-          python -m py_compile main.py app/mobile_main.py app/mobile_safety_patch.py service.py app/trading/live_engine.py
+          for f in main.py app/mobile_main.py app/mobile_safety_patch.py service.py app/trading/live_engine.py; do
+            echo "=== PY_COMPILE $f ==="
+            python -m py_compile "$f"
+          done
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
