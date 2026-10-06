@@ -1,9 +1,8 @@
 """Android-safe entry point for MEXC Sniper Mobile.
 
-The Kivy window is created before importing the full trading UI.  This is
-intentional: any failure in optional trading/network/protobuf modules must be
-shown inside the already-visible bootstrap window instead of terminating the
-process before the first frame.
+The Kivy window is created before importing the full trading UI. This keeps
+startup failures visible and applies the Android UI safety patch before the
+full MobileUI object is constructed.
 """
 from __future__ import annotations
 
@@ -36,14 +35,12 @@ def _log_startup_error(exc: BaseException) -> str:
 
 
 if is_android():
-    # Only Kivy core imports happen before the first frame.
     from kivy.app import App
     from kivy.clock import Clock
     from kivy.graphics import Color, Rectangle
     from kivy.uix.boxlayout import BoxLayout
     from kivy.uix.button import Button
     from kivy.uix.label import Label
-    from kivy.uix.scrollview import ScrollView
 
     class BootstrapApp(App):
         title = "MEXC Sniper Mobile"
@@ -87,9 +84,10 @@ if is_android():
             if self._loaded:
                 return
             try:
-                from app.mobile_main import MEXCSniperMobileApp
-                # Build the full UI without starting a second App event loop.
-                full_app = MEXCSniperMobileApp()
+                from app import mobile_main as mobile_module
+                from app.mobile_safety_patch import apply
+                apply(mobile_module)
+                full_app = mobile_module.MEXCSniperMobileApp()
                 full_root = full_app.build()
                 self.root_box.clear_widgets()
                 self.root_box.add_widget(full_root)
@@ -101,8 +99,6 @@ if is_android():
                 self.detail.text = f"{type(exc).__name__}: {exc}\n\nA log was saved as mexc_startup_crash.log"
                 self._show_full_ui.opacity = 1
                 self._show_full_ui.disabled = False
-                # Keep only a compact detail in the visible screen; full traceback
-                # is written to the file for diagnosis.
 
 else:
     try:
