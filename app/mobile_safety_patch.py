@@ -16,14 +16,6 @@ def apply(m):
     WHITE, MUTED, CYAN, AMBER, GREEN, RED, PANEL_2 = m.WHITE, m.MUTED, m.CYAN, m.AMBER, m.GREEN, m.RED, m.PANEL_2
 
     def safe_show_page(self, page):
-        """Switch pages without starting network work from a tab click.
-
-        On Android the old LIVE Trades handler scheduled an account/API sync
-        50ms after navigation. On slower devices that overlapped page creation,
-        service-state polling and widget rendering and could terminate the UI.
-        LIVE Trades now renders first; the user can explicitly press SYNC MEXC
-        ACCOUNT, which is already coalesced and runs off the UI thread.
-        """
         try:
             self.current_page = page
             self.content_host.clear_widgets()
@@ -34,12 +26,8 @@ def apply(m):
             self._log(f"PAGE SWITCH ERROR • {exc}", error=True)
 
     def safe_page_live_trades(self):
-        # Exactly one vertical ScrollView. Do not nest a second vertical
-        # ScrollView inside it; older Android/Kivy combinations can crash when
-        # the page is first measured after a tab switch.
         root = BoxLayout(orientation="vertical", spacing=dp(12), padding=dp(14), size_hint_y=None)
         root.bind(minimum_height=root.setter("height"))
-
         stats = GridLayout(cols=4, spacing=dp(10), size_hint_y=None, height=dp(84))
         self.live_free = StatCard("USDT Available")
         self.live_total = StatCard("USDT Total")
@@ -48,19 +36,16 @@ def apply(m):
         for w in (self.live_free, self.live_total, self.live_count, self.live_account):
             stats.add_widget(w)
         root.add_widget(stats)
-
         bar = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
         refresh = PillButton(text="SYNC MEXC ACCOUNT")
         refresh.bind(on_release=lambda *_: self._request_account_refresh(sync=True))
         bar.add_widget(refresh)
         root.add_widget(bar)
-
         root.add_widget(SectionTitle("REAL POSITIONS"))
         self.live_positions_box = BoxLayout(orientation="vertical", spacing=dp(10), size_hint_y=None)
         self.live_positions_box.bind(minimum_height=self.live_positions_box.setter("height"))
         root.add_widget(self.live_positions_box)
-        self.live_empty = Label(text="No synchronized real holdings.", color=MUTED,
-                                size_hint_y=None, height=dp(40))
+        self.live_empty = Label(text="No synchronized real holdings.", color=MUTED, size_hint_y=None, height=dp(40))
         self.live_positions_box.add_widget(self.live_empty)
         return self._scroll_page(root)
 
@@ -93,13 +78,11 @@ def apply(m):
                 positions = list(engine.positions.values()) if engine else []
                 prices = dict(self.controller.prices)
             if engine is None:
-                self.live_positions_box.add_widget(Label(text="Connect the account first.", color=MUTED,
-                                                         size_hint_y=None, height=dp(40)))
+                self.live_positions_box.add_widget(Label(text="Connect the account first.", color=MUTED, size_hint_y=None, height=dp(40)))
                 return
             positions.sort(key=lambda p: p.symbol)
             if not positions:
-                self.live_positions_box.add_widget(Label(text="No synchronized real holdings.", color=MUTED,
-                                                         size_hint_y=None, height=dp(40)))
+                self.live_positions_box.add_widget(Label(text="No synchronized real holdings.", color=MUTED, size_hint_y=None, height=dp(40)))
                 return
             for pos in positions:
                 current = float(prices.get(pos.symbol, pos.entry_price))
@@ -109,14 +92,11 @@ def apply(m):
                 card = Card(orientation="vertical", padding=dp(12), spacing=dp(6), size_hint_y=None, height=dp(188), color=PANEL_2)
                 top = BoxLayout(size_hint_y=None, height=dp(30))
                 top.add_widget(Label(text=pos.symbol, color=WHITE, bold=True, font_size="18sp", halign="left"))
-                top.add_widget(Label(text="ACCOUNT SYNC" if synced else "LIVE TRADE",
-                                    color=AMBER if synced else GREEN, bold=True, font_size="10sp", halign="right"))
+                top.add_widget(Label(text="ACCOUNT SYNC" if synced else "LIVE TRADE", color=AMBER if synced else GREEN, bold=True, font_size="10sp", halign="right"))
                 card.add_widget(top)
-                card.add_widget(Label(text=f"QTY  {pos.quantity:.10f}    ENTRY  {pos.entry_price:.10f}", color=MUTED,
-                                      font_size="10sp", halign="left", size_hint_y=None, height=dp(20)))
+                card.add_widget(Label(text=f"QTY  {pos.quantity:.10f}    ENTRY  {pos.entry_price:.10f}", color=MUTED, font_size="10sp", halign="left", size_hint_y=None, height=dp(20)))
                 pnl_color = GREEN if pnl_usdt >= 0 else RED
-                card.add_widget(Label(text=f"CURRENT  {current:.10f}     P/L  {pnl_usdt:+.6f} USDT  ({pnl_pct:+.3f}%)",
-                                      color=pnl_color, font_size="11sp", bold=True, size_hint_y=None, height=dp(24)))
+                card.add_widget(Label(text=f"CURRENT  {current:.10f}     P/L  {pnl_usdt:+.6f} USDT  ({pnl_pct:+.3f}%)", color=pnl_color, font_size="11sp", bold=True, size_hint_y=None, height=dp(24)))
                 sltp = "SL / TP  reference unavailable for pre-existing holding" if synced else f"SL  {pos.stop_loss:.10f}    TP  {pos.take_profit:.10f}"
                 card.add_widget(Label(text=sltp, color=MUTED, font_size="10sp", size_hint_y=None, height=dp(20)))
                 card.add_widget(Label(text=f"ORDER  {pos.entry_order_id}", color=MUTED, font_size="9sp", size_hint_y=None, height=dp(18)))
@@ -128,30 +108,20 @@ def apply(m):
         except Exception as exc:
             self._log(f"LIVE POSITIONS VIEW ERROR • {exc}", error=True)
             self.live_positions_box.clear_widgets()
-            self.live_positions_box.add_widget(Label(text="Unable to render LIVE positions. Use SYNC MEXC ACCOUNT.",
-                                                      color=MUTED, size_hint_y=None, height=dp(40)))
+            self.live_positions_box.add_widget(Label(text="Unable to render LIVE positions. Use SYNC MEXC ACCOUNT.", color=MUTED, size_hint_y=None, height=dp(40)))
 
     def safe_collect(self):
         data = dict(self.cfg)
         for key, widget in self.fields.items():
-            if isinstance(widget, Switch):
-                data[key] = bool(widget.active)
-            else:
-                data[key] = widget.text
-        numeric = [
-            "live_order_usdt", "live_hard_max_order_usdt", "live_stop_loss_pct",
-            "live_take_profit_pct", "live_max_slippage_pct", "live_max_spread_pct",
-            "live_max_entry_drift_pct", "live_min_top_ask_coverage_pct",
-            "scanner_score_threshold", "scanner_ready_threshold", "scanner_reset_threshold",
-            "scanner_cooldown_seconds", "scanner_stale_after_ms",
-        ]
+            data[key] = bool(widget.active) if isinstance(widget, Switch) else widget.text
+        numeric = ["live_order_usdt", "live_hard_max_order_usdt", "live_stop_loss_pct", "live_take_profit_pct", "live_max_slippage_pct", "live_max_spread_pct", "live_max_entry_drift_pct", "live_min_top_ask_coverage_pct", "scanner_score_threshold", "scanner_ready_threshold", "scanner_reset_threshold", "scanner_cooldown_seconds", "scanner_stale_after_ms"]
         ints = ["live_max_open_positions", "scanner_symbol_limit", "scanner_confirmations"]
         for key in numeric:
             raw = str(data.get(key, "")).strip()
             if not raw:
                 raise ValueError(f"{key}: value is required")
             value = float(raw)
-            if value < 0 and key not in {"live_stop_loss_pct"}:
+            if value < 0:
                 raise ValueError(f"{key}: value cannot be negative")
             data[key] = value
         for key in ints:
@@ -162,12 +132,52 @@ def apply(m):
             if value < 1:
                 raise ValueError(f"{key}: value must be at least 1")
             data[key] = value
+        if data["live_order_usdt"] > data["live_hard_max_order_usdt"]:
+            raise ValueError("live_order_usdt cannot exceed live_hard_max_order_usdt")
         data["trading_mode"] = "LIVE"
         data["trading_env"] = "live"
         return data
+
+    def safe_start_background_service(self):
+        """Start the declared p4a service with a generated-class fallback."""
+        from jnius import autoclass
+        activity_cls = autoclass("org.kivy.android.PythonActivity")
+        activity = activity_cls.mActivity
+        package_name = str(activity.getPackageName())
+        try:
+            service = autoclass(package_name + ".ServiceSniperd")
+            service.start(activity, "mexc")
+            return
+        except Exception as first_error:
+            try:
+                # Current python-for-android SDL2 exposes this official launcher.
+                activity_cls.start_service("MEXC Sniper", "MEXC Sniper background engine", "mexc")
+                self._log(f"BG SERVICE FALLBACK • {type(first_error).__name__}")
+                return
+            except Exception as second_error:
+                raise RuntimeError(
+                    f"Android background service unavailable: {type(first_error).__name__}: {first_error}; "
+                    f"fallback failed: {type(second_error).__name__}: {second_error}"
+                )
+
+    def safe_stop_background_service(self):
+        from jnius import autoclass
+        activity_cls = autoclass("org.kivy.android.PythonActivity")
+        activity = activity_cls.mActivity
+        package_name = str(activity.getPackageName())
+        try:
+            service = autoclass(package_name + ".ServiceSniperd")
+            service.stop(activity, "mexc")
+        except Exception:
+            try:
+                activity_cls.stop_service()
+            except Exception:
+                pass
 
     m.MobileUI._show_page = safe_show_page
     m.MobileUI._page_live_trades = safe_page_live_trades
     m.MobileUI._render_account_cards = safe_render_account_cards
     m.MobileUI._render_live_positions = safe_render_live_positions
     m.MobileUI.collect = safe_collect
+    m.MobileUI._start_background_service = safe_start_background_service
+    m.MobileUI._stop_background_service = safe_stop_background_service
