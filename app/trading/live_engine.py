@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from decimal import Decimal
 
 from app.config import settings
 from app.trading.mexc_spot_api import MEXCSpotAPI, floor_to_step
@@ -21,21 +20,7 @@ class LivePosition:
 
 
 class LiveSpotEngine:
-    """Spot-only live execution with a fail-closed order lifecycle.
-
-    Safety checks happen before every order:
-      1. explicit LIVE gate
-      2. SPOT account + permission
-      3. symbol Spot availability
-      4. configured notional limits
-      5. free USDT balance
-      6. exchange quantity/quote constraints
-      7. order response validation
-      8. order-status reconciliation after submission
-
-    SL/TP are monitored by this process and closed with MARKET SELL. They are
-    not exchange-native stop orders, so the process must remain healthy.
-    """
+    """Spot-only live execution with a fail-closed order lifecycle."""
 
     CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
 
@@ -63,7 +48,10 @@ class LiveSpotEngine:
         self.max_entry_drift_pct = max(0.0, float(settings.live_max_entry_drift_pct))
         self.min_top_ask_coverage_pct = max(0.0, float(settings.live_min_top_ask_coverage_pct))
 
-        self.hard_max_order_usdt = max(self.order_usdt, float(getattr(settings, "live_hard_max_order_usdt", 100.0)))
+        # The configured hard ceiling is a real ceiling. Never raise it to match
+        # the requested order size, otherwise the safety control becomes useless.
+        configured_cap = float(getattr(settings, "live_hard_max_order_usdt", 100.0))
+        self.hard_max_order_usdt = configured_cap if configured_cap > 0 else 100.0
 
     def preflight(self) -> dict:
         if not self.enabled:
@@ -106,7 +94,6 @@ class LiveSpotEngine:
 
         symbols = info.get("symbols") or []
         if not symbols:
-            # Some responses can expose symbol-level fields directly.
             return info
 
         item = next(
@@ -124,30 +111,45 @@ class LiveSpotEngine:
                 return float(item.get("total") or item.get("balance") or item.get("free") or 0)
         return 0.0
 
-
-    def sync_account_positions(self, min_notional_usdt: float = 1.0, account: dict | None = None) -> list[LivePosition]:
-        """Import non-zero USDT-quoted Spot holdings already present on MEXC.
-
-        These positions may have been bought outside this process. They are marked
-        ACCOUNT_SYNC so the LIVE Trades screen can display and manually close them.
-        The app does not invent an entry price: current market price is used as the
-        reference until trade history is available.
-        """
-        account = account if account is not None else self.api.account()
-        balances = account.get("balances", []) or []
-        imported = []
-
-        for item in balances:
-            asset = str(item.get("asset", "")).upper().strip()
-            if not asset or asset == "USDT":
+    @staticmethod
+    def _asset_balances(account: dict, asset: str) -> tuple[float, float, float]:
+        """Return free, locked and total for an asset from a MEXC account payload."""
+        for item in account.get("balances", []) or []:
+            if str(item.get("asset", "")).upper() != asset.upper():
                 continue
             try:
                 free = float(item.get("free") or item.get("available") or item.get("availableAmount") or 0)
                 locked = float(item.get("locked") or item.get("frozen") or item.get("freeze") or 0)
                 total_field = item.get("balance") or item.get("total")
-                qty = float(total_field) if total_field is not None else (free + locked)
+                total = float(total_field) if total_field is not None else free + locked
+                return max(0.0, free), max(0.0, locked), max(0.0, total)
             except (TypeError, ValueError):
+                return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0
+
+    def sync_account_positions(
+        self,
+        min_notional_usdt: float = 1.0,
+        account: dict | None = None,
+    ) -> list[LivePosition]:
+        """Make local real positions reflect the current MEXC Spot balances.
+
+        This is deliberately account-driven. It updates quantities for positions
+        already known by the app, imports holdings bought outside the app, and
+        removes positions that no longer exist on the exchange. It never keeps a
+        stale quantity after a partial/external sell.
+        """
+        account = account if account is not None else self.api.account()
+        balances = account.get("balances", []) or []
+        imported: list[LivePosition] = []
+        observed_symbols: set[str] = set()
+
+        for item in balances:
+            asset = str(item.get("asset", "")).upper().strip()
+            if not asset or asset == "USDT":
                 continue
+
+            free, locked, qty = self._asset_balances(account, asset)
             if qty <= 0:
                 continue
 
@@ -158,13 +160,19 @@ class LiveSpotEngine:
                 ask = float(ticker.get("askPrice") or 0)
                 current = bid if bid > 0 else ask
             except Exception:
+                # Do not destroy a known position just because a ticker request
+                # temporarily failed. The next account sync will retry it.
                 continue
+
             if current <= 0 or qty * current < float(min_notional_usdt):
                 continue
 
+            observed_symbols.add(symbol)
             existing = self.positions.get(symbol)
             if existing is not None:
-                # Keep the real engine's internally tracked entry/SL/TP unchanged.
+                # Quantity is always authoritative from the exchange. Preserve
+                # the entry metadata for positions opened by this process.
+                existing.quantity = qty
                 imported.append(existing)
                 continue
 
@@ -180,6 +188,15 @@ class LiveSpotEngine:
             )
             self.positions[symbol] = position
             imported.append(position)
+
+        # A successful account response is the source of truth. Remove stale
+        # local positions that have disappeared from the exchange balance set.
+        for symbol in list(self.positions):
+            if symbol not in observed_symbols:
+                asset = symbol[:-4] if symbol.endswith("USDT") else symbol
+                _, _, total = self._asset_balances(account, asset)
+                if total <= 0:
+                    self.positions.pop(symbol, None)
 
         return imported
 
@@ -197,10 +214,8 @@ class LiveSpotEngine:
 
     @staticmethod
     def _free_balance(account: dict, asset: str) -> float:
-        for item in account.get("balances", []):
-            if str(item.get("asset", "")).upper() == asset.upper():
-                return float(item.get("free") or 0)
-        return 0.0
+        free, _, _ = LiveSpotEngine._asset_balances(account, asset)
+        return free
 
     def _validate_quote_order(self, rules: dict) -> None:
         min_quote = float(
@@ -228,6 +243,10 @@ class LiveSpotEngine:
 
         if not self.enabled:
             raise RuntimeError("Live trading is disabled")
+        if self.order_usdt > self.hard_max_order_usdt:
+            raise RuntimeError(
+                f"LIVE_ORDER_USDT {self.order_usdt} exceeds hard safety ceiling {self.hard_max_order_usdt}"
+            )
         if symbol in self.positions:
             return None
         if len(self.positions) >= self.max_open_positions:
@@ -238,10 +257,6 @@ class LiveSpotEngine:
         rules = self._symbol_rules(symbol)
         self._validate_quote_order(rules)
 
-        # Fresh pre-trade market guard. The signal price can be stale by the
-        # time an authenticated REST order is submitted. For a MARKET BUY we
-        # therefore use the current best ask and a small depth snapshot to
-        # estimate the executable VWAP before sending any real order.
         book = self.api.book_ticker(symbol)
         bid = float(book.get("bidPrice") or 0)
         ask = float(book.get("askPrice") or 0)
@@ -299,14 +314,12 @@ class LiveSpotEngine:
             top_coverage_pct = top_quote / self.order_usdt * 100.0
             if top_coverage_pct < self.min_top_ask_coverage_pct:
                 raise RuntimeError(
-                    f"LIVE entry rejected: top ask covers {top_coverage_pct:.1f}% of order; "
-                    f"minimum is {self.min_top_ask_coverage_pct:.1f}%"
+                    f"LIVE entry rejected: top ask covers {top_coverage_pct:.1f}% of order; minimum is {self.min_top_ask_coverage_pct:.1f}%"
                 )
 
         account = self.api.account()
         self._assert_spot_account(account)
         free_usdt = self._free_balance(account, "USDT")
-        # Buffer protects against fee/reservation rounding.
         required = self.order_usdt * 1.002
         if free_usdt < required:
             raise RuntimeError(
@@ -324,28 +337,17 @@ class LiveSpotEngine:
         if not order_id:
             raise RuntimeError(f"BUY response has no orderId: {order}")
 
-        # Reconcile against the exchange before considering the position open.
         status = self.api.get_order(symbol, order_id)
-        executed_qty = float(
-            status.get("executedQty")
-            or order.get("executedQty")
-            or 0
-        )
+        executed_qty = float(status.get("executedQty") or order.get("executedQty") or 0)
         executed_quote = float(
             status.get("cummulativeQuoteQty")
             or order.get("cummulativeQuoteQty")
             or 0
         )
         if executed_qty <= 0:
-            raise RuntimeError(
-                f"BUY order {order_id} has no executed quantity yet: {status}"
-            )
+            raise RuntimeError(f"BUY order {order_id} has no executed quantity yet: {status}")
 
-        avg_price = (
-            executed_quote / executed_qty
-            if executed_quote > 0
-            else price
-        )
+        avg_price = executed_quote / executed_qty if executed_quote > 0 else price
 
         position = LivePosition(
             symbol=symbol,
@@ -372,6 +374,7 @@ class LiveSpotEngine:
         return None
 
     def close(self, symbol: str, reason: str):
+        """Sell only currently free quantity and reconcile the remainder."""
         symbol = symbol.upper()
         position = self.positions.get(symbol)
         if position is None:
@@ -379,10 +382,19 @@ class LiveSpotEngine:
 
         rules = self._symbol_rules(symbol)
         step = str(rules.get("baseSizePrecision") or "0.00000001")
-        quantity = floor_to_step(position.quantity, step)
+
+        # Never submit a sell for locked/unavailable funds. This also handles
+        # external/manual partial sells between UI refreshes.
+        account_before = self.api.account()
+        asset = symbol[:-4] if symbol.endswith("USDT") else symbol
+        free_qty, _, total_before = self._asset_balances(account_before, asset)
+        sellable = min(position.quantity, free_qty)
+        quantity = floor_to_step(sellable, step)
         if quantity <= 0:
+            if total_before <= 0:
+                self.positions.pop(symbol, None)
             raise RuntimeError(
-                f"Quantity became zero after precision rounding for {symbol}"
+                f"No free {asset} quantity available to sell; locked balance is not sellable"
             )
 
         client_id = self.api.make_client_order_id("SNIPERSELL")
@@ -402,9 +414,18 @@ class LiveSpotEngine:
                 f"SELL order {order_id} has no executed quantity yet: {status}"
             )
 
-        self.positions.pop(symbol, None)
+        # Re-read the exchange balance after the sell. Do not remove a position
+        # merely because a partial fill occurred.
+        account_after = self.api.account()
+        _, _, remaining_total = self._asset_balances(account_after, asset)
+        if remaining_total > 0:
+            position.quantity = remaining_total
+        else:
+            self.positions.pop(symbol, None)
+
         return {
             "reason": reason,
             "position": position,
             "order": status,
+            "remaining_quantity": remaining_total,
         }
