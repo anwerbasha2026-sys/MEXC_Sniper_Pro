@@ -13,7 +13,7 @@ from app.trading.live_engine import LiveSpotEngine
 
 
 SYMBOL = "BTCUSDT"
-REAL_CONFIRMATION = "EXECUTE_REAL_SPOT_ORDER"
+REAL_CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
 
 
 def print_preflight(engine: LiveSpotEngine) -> dict:
@@ -69,9 +69,7 @@ def main() -> int:
         if args.confirm != REAL_CONFIRMATION:
             print()
             print("REAL ORDER BLOCKED")
-            print(
-                f"Required confirmation: {REAL_CONFIRMATION}"
-            )
+            print(f"Required confirmation: {REAL_CONFIRMATION}")
             return 2
 
         order_size = float(preflight["live_order_usdt"])
@@ -79,14 +77,10 @@ def main() -> int:
 
         if order_size <= 0:
             raise RuntimeError("Configured live order size is invalid.")
-
+        if hard_cap <= 0:
+            raise RuntimeError("Configured hard safety ceiling is invalid.")
         if order_size > hard_cap:
             raise RuntimeError("Configured order exceeds hard safety cap.")
-
-        if hard_cap > 10.0:
-            raise RuntimeError(
-                "Unexpected hard cap. This test only permits 10 USDT."
-            )
 
         print()
         print("=" * 80)
@@ -102,19 +96,11 @@ def main() -> int:
 
         print()
         print("Sending the real Spot BUY through LiveSpotEngine...")
-
-        # open_long() performs all live safety checks and then submits
-        # the real MARKET BUY using the configured quote amount.
-        position = engine.open_long(
-            symbol=SYMBOL,
-            price=1.0,
-            score=0.0,
-        )
+        position = engine.open_long(symbol=SYMBOL, price=1.0, score=0.0)
 
         if position is None:
             raise RuntimeError(
-                "No position was created. "
-                "The order may have been rejected or the position limit reached."
+                "No position was created. The order may have been rejected or the position limit reached."
             )
 
         print()
@@ -128,13 +114,8 @@ def main() -> int:
         print(f"Take profit : {position.take_profit}")
         print(f"Order ID    : {position.entry_order_id}")
         print("=" * 80)
-
         print()
-        print(
-            "WARNING: SL/TP are monitored by the running process, "
-            "not exchange-native stop orders."
-        )
-
+        print("WARNING: SL/TP are monitored by the running process, not exchange-native stop orders.")
         return 0
 
     except Exception as exc:
