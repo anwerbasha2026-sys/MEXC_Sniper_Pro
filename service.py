@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -16,10 +17,6 @@ def _default_config_path() -> Path:
     if configured:
         return Path(configured)
 
-    # python-for-android normally exposes the app-private directory through
-    # ANDROID_PRIVATE. Fall back to the package-private files directory for
-    # this app. Never use Path.home() on Android: on affected builds it can be
-    # /data, which is not writable by the application.
     private = os.environ.get("ANDROID_PRIVATE")
     if private:
         return Path(private) / "mexc_sniper_mobile.json"
