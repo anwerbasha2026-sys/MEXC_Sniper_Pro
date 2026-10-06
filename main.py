@@ -85,15 +85,16 @@ if is_android():
                 return
             try:
                 from app import mobile_main as mobile_module
+                from app.mobile_main import MEXCSniperMobileApp
                 from app.mobile_safety_patch import apply
                 apply(mobile_module)
-                full_app = mobile_module.MEXCSniperMobileApp()
+                full_app = MEXCSniperMobileApp()
                 full_root = full_app.build()
                 self.root_box.clear_widgets()
                 self.root_box.add_widget(full_root)
                 self._loaded = True
             except BaseException as exc:
-                text = _log_startup_error(exc)
+                _log_startup_error(exc)
                 self.message.text = "FULL UI LOAD FAILED — APP KEPT OPEN"
                 self.message.color = (1.0, 0.35, 0.45, 1)
                 self.detail.text = f"{type(exc).__name__}: {exc}\n\nA log was saved as mexc_startup_crash.log"
