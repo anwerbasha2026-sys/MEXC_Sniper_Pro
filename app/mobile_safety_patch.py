@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -14,10 +15,28 @@ def apply(m):
     Switch = m.Switch
     WHITE, MUTED, CYAN, AMBER, GREEN, RED, PANEL_2 = m.WHITE, m.MUTED, m.CYAN, m.AMBER, m.GREEN, m.RED, m.PANEL_2
 
+    def safe_show_page(self, page):
+        """Switch pages without starting network work from a tab click.
+
+        On Android the old LIVE Trades handler scheduled an account/API sync
+        50ms after navigation. On slower devices that overlapped page creation,
+        service-state polling and widget rendering and could terminate the UI.
+        LIVE Trades now renders first; the user can explicitly press SYNC MEXC
+        ACCOUNT, which is already coalesced and runs off the UI thread.
+        """
+        try:
+            self.current_page = page
+            self.content_host.clear_widgets()
+            self.content_host.add_widget(self.pages[page])
+            for name, btn in self.nav_buttons.items():
+                btn.set_active(name == page)
+        except Exception as exc:
+            self._log(f"PAGE SWITCH ERROR • {exc}", error=True)
+
     def safe_page_live_trades(self):
-        # Keep a single vertical ScrollView. The previous implementation put a
-        # second vertical ScrollView inside the page ScrollView, which is fragile
-        # on older Android/Kivy builds when the page becomes visible.
+        # Exactly one vertical ScrollView. Do not nest a second vertical
+        # ScrollView inside it; older Android/Kivy combinations can crash when
+        # the page is first measured after a tab switch.
         root = BoxLayout(orientation="vertical", spacing=dp(12), padding=dp(14), size_hint_y=None)
         root.bind(minimum_height=root.setter("height"))
 
@@ -147,6 +166,7 @@ def apply(m):
         data["trading_env"] = "live"
         return data
 
+    m.MobileUI._show_page = safe_show_page
     m.MobileUI._page_live_trades = safe_page_live_trades
     m.MobileUI._render_account_cards = safe_render_account_cards
     m.MobileUI._render_live_positions = safe_render_live_positions
